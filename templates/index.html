@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}新建核查 · 报审资料核查{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>新建核查</h1>
+  <p class="sub">选一个文件夹即可：系统会递归读取里面所有子文件夹的每个文件，Word/Excel/PDF/图片都读内容（扫描件和图片自动 OCR），再按报审模板逐项归类，最后列出缺什么。文件夹名、文件名不规范也能认出来。</p>
+
+  <form method="post" action="{{ url_for('do_compare') }}" id="cmp">
+    <div class="field">
+      <label>① 报审资料模板<span class="hint">选文件夹（空目录也行）；也支持 .rar/.zip</span></label>
+      <div class="row">
+        <input type="text" name="template_path" id="template_path" placeholder="C:\Users\...\报审资料模板" required>
+        <button type="button" class="btn ghost" data-pick="dir" data-target="template_path">浏览…</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>② 单位送审资料<span class="hint">选文件夹，会读取所有子文件夹；也支持 .rar/.zip</span></label>
+      <div class="row">
+        <input type="text" name="unit_path" id="unit_path" placeholder="C:\Users\...\2026.7.8报审--××项目" required>
+        <button type="button" class="btn ghost" data-pick="dir" data-target="unit_path">浏览…</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>③ 资料交接单 Word<span class="hint">写入「工作事项」栏</span></label>
+      <div class="row">
+        <input type="text" name="docx_path" id="docx_path" placeholder="C:\Users\...\资料交接单.docx" required>
+        <button type="button" class="btn ghost" data-pick="docx" data-target="docx_path">浏览…</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>项目名称<span class="hint">可不填，默认取送审文件夹名</span></label>
+      <input type="text" name="name" id="name" placeholder="如：高碑店市10kV肖官营512等23条配电自动化标准化线路改造">
+    </div>
+
+    <div class="field">
+      <label class="checkline"><input type="checkbox" name="read_content" id="read_content" checked>
+        读取全部文件内容（Word/Excel/PDF/图片，扫描件和图片逐页 OCR）<span class="hint">第一次会慢一些，之后同一份文件直接用缓存；不勾选则只按文件名和目录判断</span></label>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" type="submit">开始比对</button>
+      <span class="tip">只读原文件，不会改动或上传；识别用本机 Windows OCR，全程离线。</span>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>最近核查</h2>
+  {% if projects %}
+    <table class="list">
+      {% for p in projects %}
+        <tr>
+          <td><a href="{{ url_for('review', pid=p.id) }}">{{ p.name }}</a></td>
+          <td class="muted">{{ p.created }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">还没有记录。</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-pick]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const old = btn.textContent;
+    btn.textContent = '选择中…';
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/pick?kind=${btn.dataset.pick}`);
+      const j = await r.json();
+      if (j.ok && j.path) {
+        document.getElementById(btn.dataset.target).value = j.path;
+        if (btn.dataset.target === 'unit_path' && !document.getElementById('name').value) {
+          document.getElementById('name').value = j.path.split('\\').pop();
+        }
+      } else if (j.err && j.err.trim()) {
+        alert('选择失败：' + j.err);
+      }
+    } catch (e) {
+      alert('选择失败：' + e);
+    } finally {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  });
+});
+</script>
+{% endblock %}
