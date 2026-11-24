@@ -1,0 +1,468 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · 核对{% endblock %}
+
+{% macro hitblock(h) %}
+<div class="hit-block">
+  <div class="hit-line">
+    <span class="hitname" title="{{ h.rel }}">{{ h.name }}</span>
+    {% for pr in h.pages[:2] %}<span class="pg">P{{ pr[0] }}{% if pr[1] != pr[0] %}-{{ pr[1] }}{% endif %}</span>{% endfor %}
+    <span class="badge">{{ h.how }}</span>
+    <button class="linkbtn viewtext" data-rel="{{ h.rel }}">看全文</button>
+  </div>
+  {% if h.snippet %}<div class="snip">{{ h.snippet }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+<section class="card">
+  <div class="proj-head">
+    <div>
+      <h1>{{ p.project_name or p.name }}</h1>
+      <p class="meta">
+        {{ p.created }} · 文件夹递归读取 {{ n_files }} 个文件（已读出内容 {{ n_read }} 个）
+        {% if n_files > n_read %} · 未读出文字 {{ n_files - n_read }} 个（无文字图片/CAD/视频等，见下方文件清单）{% endif %}
+        {% if n_img %} · 图片 {{ n_img }} 个（OCR 读出文字 {{ n_img_read }} 个）{% endif %}
+        {% if empty_dirs %} · 空目录 {{ empty_dirs|length }} 个{% endif %}
+        {% if p.template_info and p.template_info.leaf_count %} · 模板 {{ p.template_info.leaf_count }} 项{% endif %}
+        <br>模板 {{ p.template_path or '（准备中）' }}<br>送审 {{ p.unit_path or '（准备中）' }}
+      </p>
+      {% if empty_dirs %}
+      <details class="empty-dirs">
+        <summary>{{ empty_dirs|length }} 个目录是空的（建了文件夹但没放文件）</summary>
+        <ul>{% for d in empty_dirs %}<li>{{ d }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+      {% if p.template_info and p.template_info.auto_count %}
+      <div class="warnline">模板里有 {{ p.template_info.auto_count }} 个目录在规则表中没有对应项，已按目录名自动补上，建议到「规则表」补充关键词。</div>
+      {% endif %}
+      {% if p.status == 'done' %}
+      <div class="name-edit">
+        <label>交接单「工程名称」</label>
+        <input type="text" id="projName" value="{{ p.project_name or p.name }}">
+      </div>
+      {% endif %}
+    </div>
+    {% if p.status == 'done' %}
+    <div class="chips">
+      {% for s in statuses %}
+        <span class="chip {{ s }}" data-stat="{{ s }}">{{ stats.get(s, 0) }} {{ s }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if p.status == 'processing' %}
+  <div class="progress-box" id="progressBox">
+    {% set pr = p.progress or {} %}
+    {% set pct = (100 * pr.done / pr.total) if pr.total else 0 %}
+    <div class="progress-head"><span id="phase">{{ pr.phase or '准备中' }}</span><span id="pct">{{ '%.0f'|format(pct) }}%</span></div>
+    <div class="bar"><span id="bar" style="width: {{ pct }}%"></span></div>
+    <p class="muted" id="progressMsg">{{ pr.message or '正在读取文件内容，扫描件需要逐页识别，第一次会慢一些……' }}</p>
+    <p class="tip">读取全部文件内容（含扫描件 OCR）可能需要几分钟。可以离开这个页面，处理完成后刷新即可。</p>
+  </div>
+  {% elif p.status == 'error' %}
+  <div class="errorbox">
+    <h2>处理失败</h2>
+    <p>{{ p.error }}</p>
+    <p class="muted">常见原因：压缩包加密/损坏、路径无权限、Word 正被占用。处理后重新新建核查即可。</p>
+    <p><a class="btn ghost" href="{{ url_for('index') }}">返回新建</a></p>
+  </div>
+  {% else %}
+
+  <div class="toolbar">
+    <button class="btn ghost" id="markMissing">把未提供项标为缺失</button>
+    <button class="btn ghost" id="checkAll">全选写入</button>
+    <button class="btn ghost" id="checkNone">全部不写</button>
+    <button class="btn ghost" id="recheck">按新规则重跑</button>
+    <span class="grow"></span>
+    <button class="btn primary" id="gen">生成交接单</button>
+  </div>
+
+  {% if tray %}
+  <div class="tray">
+    <div class="tray-head">未归类到模板项的文件 {{ tray|length }} 个 <span class="muted">—— 模板外资料（施工日志、审计稿等）会列在这里，可以忽略；双击打开原文件，需要指定时按住拖到下面任意一行</span></div>
+    <div class="tray-body">
+      {% for c in tray %}
+        <span class="file-chip" draggable="true" data-rel="{{ c.rel }}" title="{{ c.snippet }}&#10;双击打开原文件">{{ c.name }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <table class="grid">
+    <colgroup>
+      <col style="width:50px"><col style="width:70px"><col style="width:250px">
+      <col style="width:96px"><col><col style="width:220px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="c-write">写入</th>
+        <th class="c-id">序号</th>
+        <th>资料名称</th>
+        <th class="c-status">状态</th>
+        <th>依据（文件 / 页码 / 内容摘要）</th>
+        <th>写进交接单的文字</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in p.rows %}
+      <tr data-key="{{ r.key }}" data-status="{{ r.status }}" class="drop-row">
+        <td class="c-write"><input type="checkbox" class="write" {% if r.write %}checked{% endif %}></td>
+        <td class="c-id muted">{{ r.key }}</td>
+        <td>
+          <div class="label">{{ r.label }}</div>
+          {% if r.dir %}<div class="path">{{ r.dir }}</div>{% endif %}
+          {% if r.auto %}<span class="tag auto">自动补的模板项</span>{% endif %}
+        </td>
+        <td class="c-status">
+          <select class="status">
+            {% for s in statuses %}<option {% if s == r.status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+          </select>
+        </td>
+        <td class="hits">
+          {% if r.hits %}
+            {% for h in r.hits[:2] %}{{ hitblock(h) }}{% endfor %}
+            {% if r.hits|length > 2 %}
+            <details class="morehits">
+              <summary>另有 {{ r.hits|length - 2 }} 份</summary>
+              {% for h in r.hits[2:6] %}{{ hitblock(h) }}{% endfor %}
+            </details>
+            {% endif %}
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+          {% if r.note %}<div class="note">{{ r.note }}</div>{% endif %}
+          {% if r.candidates and not r.hits %}
+            <div class="cand">可指定：{% for c in r.candidates[:4] %}<span class="candname" title="{{ c.snippet }}">{{ c.name }}</span>{% endfor %}</div>
+          {% endif %}
+          {% if r.assigned %}<button class="btn tiny ghost unassign" data-key="{{ r.key }}">取消指定</button>{% endif %}
+        </td>
+        <td><input type="text" class="report" value="{{ r.report }}"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="extras">
+    <h3>手动追加</h3>
+    <div class="row">
+      <input type="text" id="extraInput" placeholder="如：带电作业相关资料">
+      <button class="btn ghost" id="addExtra">添加一条</button>
+    </div>
+    <ul id="extraList"></ul>
+  </div>
+
+  <details class="filelist" {% if request.args.get('files') %}open{% endif %}>
+    <summary>文件内容识别清单（{{ n_files }} 个文件，已读出 {{ n_read }} 个{% if n_files > n_read %}，未读出 {{ n_files - n_read }} 个{% endif %}）</summary>
+    <div class="file-search">
+      <input type="text" id="fileSearch" placeholder="搜文件名、归类、内容关键词…">
+      <label class="unread-filter"><input type="checkbox" id="onlyUnread"> 只看未读出文字的</label>
+    </div>
+    <div class="file-table-wrap">
+      <table class="filetable">
+        <thead>
+          <tr><th>文件</th><th>大小</th><th>页数</th><th>字数</th><th>识别方式</th><th>归类到</th><th>内容摘要</th><th></th></tr>
+        </thead>
+        <tbody id="fileRows">
+          {% for f in p.files %}
+          <tr class="{% if f.unclassified %}unclassified{% endif %}" data-chars="{{ f.chars }}" data-text="{{ (f.name ~ ' ' ~ f.rel ~ ' ' ~ (f.assigned|map(attribute='label')|join(' ')) ~ ' ' ~ f.snippet)|lower }}">
+            <td class="fname" title="{{ f.rel }}">{{ f.name }}{% if f.archive %}<div class="muted">来自压缩包：{{ f.archive }}</div>{% endif %}</td>
+            <td class="nowrap">{{ f.size|filesize }}</td>
+            <td class="nowrap">{{ f.pages }}</td>
+            <td class="nowrap">{{ f.chars }}</td>
+            <td class="nowrap">{{ f.method }}{% if f.warn %}<div class="warn" title="{{ f.warn }}">注意</div>{% endif %}</td>
+            <td>{% if f.assigned %}{% for a in f.assigned %}<span class="tag">{{ a.label }}</span>{% endfor %}{% else %}<span class="muted">未归类</span>{% endif %}</td>
+            <td class="fsnip">{{ f.snippet }}</td>
+            <td><button class="linkbtn viewtext" data-rel="{{ f.rel }}">全文</button><br><button class="linkbtn openfile" data-rel="{{ f.rel }}">打开</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+</section>
+
+<section class="card" id="result" hidden>
+  <h2>已生成</h2>
+  <p class="sub">写进交接单的条目：</p>
+  <ol id="items"></ol>
+  <p class="links">
+    <a class="btn primary" id="dlDocx" href="#">下载交接单</a>
+    <a class="btn ghost" id="dlXlsx" href="#">下载比对明细</a>
+    <a class="btn ghost" href="{{ url_for('open_folder', pid=p.id) }}">打开输出文件夹</a>
+  </p>
+</section>
+
+<div class="modal" id="textModal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong id="modalTitle">文件内容</strong>
+      <button class="btn tiny ghost" id="modalClose">关闭</button>
+    </div>
+    <div class="modal-meta muted" id="modalMeta"></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PID = "{{ p.id }}";
+const PSTATE = "{{ p.status }}";
+const rows = () => [...document.querySelectorAll('tr[data-key]')];
+const extras = [];
+
+/* ---------- 处理进度 ---------- */
+if (PSTATE === 'processing') {
+  const timer = setInterval(async () => {
+    try {
+      const r = await fetch(`/p/${PID}/status`, { cache: 'no-store' });
+      const j = await r.json();
+      if (!j.ok) return;
+      if (j.status === 'done' || j.status === 'error') {
+        clearInterval(timer);
+        location.reload();
+        return;
+      }
+      const pr = j.progress || {};
+      const pct = pr.total ? Math.min(100, 100 * pr.done / pr.total) : 0;
+      document.getElementById('phase').textContent = pr.phase || '处理中';
+      document.getElementById('pct').textContent = Math.round(pct) + '%';
+      document.getElementById('bar').style.width = pct + '%';
+      if (pr.message) document.getElementById('progressMsg').textContent = pr.message;
+    } catch (e) { /* 忽略网络抖动 */ }
+  }, 1200);
+}
+
+function refreshStats() {
+  const c = {};
+  rows().forEach(tr => {
+    const s = tr.querySelector('.status').value;
+    c[s] = (c[s] || 0) + 1;
+  });
+  document.querySelectorAll('[data-stat]').forEach(el => {
+    el.textContent = `${c[el.dataset.stat] || 0} ${el.dataset.stat}`;
+  });
+}
+
+/* 点状态标签只显示这一类，方便先看缺失/待确认；再点一次恢复全部 */
+let statusFilter = null;
+function applyStatusFilter() {
+  rows().forEach(tr => {
+    const s = tr.querySelector('.status').value;
+    tr.style.display = !statusFilter || s === statusFilter ? '' : 'none';
+  });
+  document.querySelectorAll('[data-stat]').forEach(el => {
+    el.classList.toggle('active', el.dataset.stat === statusFilter);
+  });
+}
+document.querySelectorAll('[data-stat]').forEach(el => {
+  el.title = '点击只看这一类，再点一次恢复全部';
+  el.addEventListener('click', () => {
+    statusFilter = statusFilter === el.dataset.stat ? null : el.dataset.stat;
+    applyStatusFilter();
+  });
+});
+
+document.addEventListener('change', e => {
+  if (e.target.classList.contains('status')) {
+    const tr = e.target.closest('tr');
+    tr.querySelector('.write').checked = e.target.value === '缺失';
+    tr.dataset.status = e.target.value;
+    refreshStats();
+    if (statusFilter) applyStatusFilter();
+  }
+});
+
+const mark = document.getElementById('markMissing');
+if (mark) mark.onclick = () => {
+  rows().forEach(tr => {
+    if (tr.querySelector('.status').value === '待确认') {
+      tr.querySelector('.status').value = '缺失';
+      tr.querySelector('.write').checked = true;
+      tr.dataset.status = '缺失';
+    }
+  });
+  refreshStats();
+};
+const checkAll = document.getElementById('checkAll');
+if (checkAll) checkAll.onclick = () => rows().forEach(tr => tr.querySelector('.write').checked = true);
+const checkNone = document.getElementById('checkNone');
+if (checkNone) checkNone.onclick = () => rows().forEach(tr => tr.querySelector('.write').checked = false);
+
+const recheck = document.getElementById('recheck');
+if (recheck) recheck.onclick = async () => {
+  if (!confirm('按当前规则表重新读取、重新归类？\n已手工改过的状态会被覆盖。')) return;
+  recheck.disabled = true;
+  recheck.textContent = '重跑中…';
+  const r = await fetch(`/p/${PID}/recheck`, { method: 'POST' });
+  const j = await r.json();
+  if (!j.ok) { alert(j.error || '重跑失败'); recheck.disabled = false; return; }
+  location.reload();
+};
+
+document.getElementById('addExtra').onclick = () => {
+  const inp = document.getElementById('extraInput');
+  const v = inp.value.trim();
+  if (!v) return;
+  extras.push(v);
+  inp.value = '';
+  const li = document.createElement('li');
+  li.textContent = v;
+  const del = document.createElement('button');
+  del.textContent = '删除';
+  del.className = 'btn tiny ghost';
+  del.onclick = () => { extras.splice(extras.indexOf(v), 1); li.remove(); };
+  li.appendChild(del);
+  document.getElementById('extraList').appendChild(li);
+};
+
+const gen = document.getElementById('gen');
+if (gen) gen.onclick = async () => {
+  const btn = gen;
+  btn.disabled = true;
+  btn.textContent = '生成中…';
+  try {
+    const payload = {
+      project_name: document.getElementById("projName").value,
+      rows: rows().map(tr => ({
+        key: tr.dataset.key,
+        status: tr.querySelector('.status').value,
+        write: tr.querySelector('.write').checked,
+        report: tr.querySelector('.report').value,
+      })),
+      extras: extras.map(x => ({ label: x })),
+    };
+    const res = await fetch(location.pathname + '/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!j.ok) { alert(j.error || '生成失败'); return; }
+    const box = document.getElementById('result');
+    box.hidden = false;
+    document.getElementById('items').innerHTML = j.items.map(x => `<li>未见${x}；</li>`).join('');
+    document.getElementById('dlDocx').href = j.docx;
+    document.getElementById('dlXlsx').href = j.xlsx;
+    box.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    alert('生成失败：' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '生成交接单';
+  }
+};
+
+/* ---------- 打开原文件 ---------- */
+async function openFile(rel) {
+  try {
+    const res = await fetch(`/p/${PID}/openfile?rel=${encodeURIComponent(rel)}`);
+    const j = await res.json();
+    if (!j.ok) alert(j.error || '打不开文件');
+  } catch (e) {
+    alert('打不开文件：' + e);
+  }
+}
+
+/* ---------- 拖拽归位（任意行） ---------- */
+let dragRel = null;
+document.querySelectorAll('.file-chip').forEach(chip => {
+  chip.addEventListener('dragstart', e => {
+    dragRel = chip.dataset.rel;
+    e.dataTransfer.setData('text/plain', dragRel);
+    e.dataTransfer.effectAllowed = 'move';
+    chip.classList.add('dragging');
+  });
+  chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+  chip.addEventListener('dblclick', e => {
+    e.preventDefault();
+    openFile(chip.dataset.rel);
+  });
+});
+
+document.querySelectorAll('tr.drop-row').forEach(tr => {
+  tr.addEventListener('dragover', e => { e.preventDefault(); tr.classList.add('drop-hover'); });
+  tr.addEventListener('dragleave', () => tr.classList.remove('drop-hover'));
+  tr.addEventListener('drop', async e => {
+    e.preventDefault();
+    tr.classList.remove('drop-hover');
+    const rel = e.dataTransfer.getData('text/plain') || dragRel;
+    if (!rel) return;
+    const res = await fetch(`/p/${PID}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: tr.dataset.key, files: [rel] }),
+    });
+    const j = await res.json();
+    if (!j.ok) { alert(j.error || '指定失败'); return; }
+    location.reload();
+  });
+});
+
+document.addEventListener('click', async e => {
+  if (e.target.classList.contains('unassign')) {
+    const tr = e.target.closest('tr');
+    const res = await fetch(`/p/${PID}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: tr.dataset.key, files: [] }),
+    });
+    const j = await res.json();
+    if (j.ok) location.reload();
+  }
+  if (e.target.classList.contains('viewtext')) {
+    e.preventDefault();
+    showText(e.target.dataset.rel);
+  }
+  if (e.target.classList.contains('openfile')) {
+    e.preventDefault();
+    openFile(e.target.dataset.rel);
+  }
+});
+
+/* ---------- 文件全文 ---------- */
+const modal = document.getElementById('textModal');
+async function showText(rel) {
+  document.getElementById('modalTitle').textContent = rel.split('/').pop();
+  document.getElementById('modalMeta').textContent = '读取中…';
+  document.getElementById('modalBody').innerHTML = '';
+  modal.hidden = false;
+  const r = await fetch(`/p/${PID}/text?rel=${encodeURIComponent(rel)}`);
+  const j = await r.json();
+  if (!j.ok) { document.getElementById('modalMeta').textContent = j.error || '读取失败'; return; }
+  document.getElementById('modalMeta').textContent =
+    `识别方式：${j.method || '—'}${j.warn ? '　注意：' + j.warn : ''}`;
+  const body = document.getElementById('modalBody');
+  body.innerHTML = '';
+  (j.pages || []).forEach(pg => {
+    const h = document.createElement('div');
+    h.className = 'modal-page';
+    h.textContent = `第 ${pg.no} 页` + (pg.src ? `（${pg.src}）` : '');
+    const pre = document.createElement('pre');
+    pre.textContent = pg.text || '（本页没有读出文字）';
+    body.appendChild(h);
+    body.appendChild(pre);
+  });
+}
+const closeBtn = document.getElementById('modalClose');
+if (closeBtn) closeBtn.onclick = () => { modal.hidden = true; };
+if (modal) modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+
+/* ---------- 文件清单搜索/筛选 ---------- */
+const search = document.getElementById('fileSearch');
+const onlyUnread = document.getElementById('onlyUnread');
+function applyFileFilter() {
+  const q = search ? search.value.trim().toLowerCase() : '';
+  const unread = onlyUnread ? onlyUnread.checked : false;
+  document.querySelectorAll('#fileRows tr').forEach(tr => {
+    const textOk = !q || (tr.dataset.text || '').includes(q);
+    const unreadOk = !unread || (tr.dataset.chars || '0') === '0';
+    tr.style.display = textOk && unreadOk ? '' : 'none';
+  });
+}
+if (search) search.addEventListener('input', applyFileFilter);
+if (onlyUnread) onlyUnread.addEventListener('change', applyFileFilter);
+</script>
+{% endblock %}
