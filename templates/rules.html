@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}规则表 · 报审资料核查{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>规则表</h1>
+  <p class="sub">
+    每条 requirement 对应模板里的一个要求。<code>match</code> 是正则，对「相对路径 + 文件名」匹配；
+    <code>na_if</code> 命中则判不适用；<code>merge_group</code> 相同的缺件在交接单里合并成一条。
+  </p>
+  {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+  <form method="post">
+    <textarea name="json" class="code" spellcheck="false">{{ text }}</textarea>
+    <div class="actions">
+      <button class="btn primary" type="submit">保存</button>
+      <span class="tip">保存后立即生效，已生成的项目不受影响。</span>
+    </div>
+  </form>
+</section>
+{% endblock %}
